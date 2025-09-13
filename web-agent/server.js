@@ -29,9 +29,15 @@ class APIHandler {
     if (req.method === 'GET' && parsedUrl.pathname === '/') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ 
-        status: 'healthy', 
-        service: 'Instagram Agent API',
-        endpoints: ['/get-user-info', '/analyze-profiles']
+        status: 'Instagram Agent API is running',
+        endpoints: {
+          'POST /get-user-info': 'Get user analysis by username',
+          'POST /analyze-profiles': 'Compare follower lists'
+        },
+        usage: {
+          'get-user-info': 'curl -X POST http://YOUR_IP:13732/get-user-info -H "Content-Type: application/json" -d \'{"username": "example_user"}\'',
+          'analyze-profiles': 'curl -X POST http://YOUR_IP:13732/analyze-profiles -H "Content-Type: application/json" -d \'{"pre_campaign_data": [...], "post_campaign_data": [...]}\'',
+        }
       }));
     } else if (req.method === 'POST' && parsedUrl.pathname === '/analyze-profiles') {
       await this.handleAnalyzeProfiles(req, res);
@@ -219,7 +225,7 @@ class APIHandler {
     }
   }
 
-  listen(port = process.env.PORT || 13732) {
+  listen(port = 13732) {
     this.server.listen(port, '0.0.0.0', () => {
       const networkInterfaces = require('os').networkInterfaces();
       const localIPs = [];
@@ -249,4 +255,4 @@ class APIHandler {
 
 // Start server
 const api = new APIHandler();
-api.listen();
+api.listen(13732);

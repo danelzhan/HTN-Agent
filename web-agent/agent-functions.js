@@ -505,19 +505,9 @@ async function image_consult(imagePathOrUrl, systemPrompt, maxRetries = 5) {
 
 async function scrape_image(url, user_name, load_delay) {
   const browser = await puppeteer.launch({
-    headless: true,
+    headless: false,
     defaultViewport: { width: 1280, height: 900 },
-    args: [
-      "--disable-notifications",
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-accelerated-2d-canvas",
-      "--no-first-run",
-      "--no-zygote",
-      "--single-process",
-      "--disable-gpu"
-    ]
+    args: ["--disable-notifications"]
   });
 
   const page = await browser.newPage();
