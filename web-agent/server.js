@@ -1,7 +1,7 @@
 require("dotenv").config();
 const http = require('http');
 const url = require('url');
-const { analyzeProfileCollage, scrape_image, poi_search, readSystemPrompt } = require('./agent-functions');
+const { analyzeProfileCollage, scrape_image, poi_search, readSystemPrompt, getUserInfo } = require('./agent-functions');
 
 function parse_data(data) {
   return data.map(d => ({ username: d.string_list_data[0].value, url: d.string_list_data[0].href }));
@@ -28,6 +28,8 @@ class APIHandler {
 
     if (req.method === 'POST' && parsedUrl.pathname === '/analyze-profiles') {
       await this.handleAnalyzeProfiles(req, res);
+    } else if (req.method === 'POST' && parsedUrl.pathname === '/get-user-info') {
+      await this.handleGetUserInfo(req, res);
     } else {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Not Found' }));
@@ -135,6 +137,81 @@ class APIHandler {
     }
   }
 
+  async handleGetUserInfo(req, res) {
+    try {
+      let body = '';
+      req.on('data', chunk => {
+        body += chunk.toString();
+      });
+
+      req.on('end', async () => {
+        try {
+          const requestData = JSON.parse(body);
+          const { username } = requestData;
+
+          if (!username) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Missing username' }));
+            return;
+          }
+
+          console.log(`[API] Getting user info for: ${username}`);
+
+          const result = await getUserInfo(username);
+          
+          // Format response
+          let response;
+          if (result.ok && result.analysis) {
+            try {
+              const analysis = JSON.parse(result.analysis.replace(/```json\n?|\n?```/g, ''));
+              response = {
+                success: true,
+                username: result.user_name,
+                labels: analysis.labels || [],
+                data: {
+                  text: analysis.data || "No analysis available"
+                },
+                stats: analysis.stats || {},
+                collage_path: result.collage_path,
+                profile_screenshot: result.profile_screenshot,
+                post_images_count: result.post_images_count,
+                timestamp: result.timestamp
+              };
+            } catch (e) {
+              response = {
+                success: false,
+                username: result.user_name,
+                error: "Failed to parse analysis",
+                raw_analysis: result.analysis,
+                timestamp: result.timestamp
+              };
+            }
+          } else {
+            response = {
+              success: false,
+              username: result.user_name,
+              error: result.error || "Analysis failed",
+              timestamp: result.timestamp
+            };
+          }
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(response, null, 2));
+
+        } catch (error) {
+          console.error('[API] Error processing user info request:', error);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Internal server error', details: error.message }));
+        }
+      });
+
+    } catch (error) {
+      console.error('[API] Error handling user info request:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Internal server error' }));
+    }
+  }
+
   listen(port = 13732) {
     this.server.listen(port, '0.0.0.0', () => {
       const networkInterfaces = require('os').networkInterfaces();
@@ -157,7 +234,8 @@ class APIHandler {
         });
       }
       console.log(`[SERVER] POST /analyze-profiles - Analyze Instagram profiles`);
-      console.log(`[SERVER] Example: curl -X POST http://${localIPs[0] || 'localhost'}:${port}/analyze-profiles -H "Content-Type: application/json" -d '{"pre_campaign_data": [...], "post_campaign_data": [...], "limit": 3}'`);
+      console.log(`[SERVER] POST /get-user-info - Get user info by username`);
+      console.log(`[SERVER] Example: curl -X POST http://${localIPs[0] || 'localhost'}:${port}/get-user-info -H "Content-Type: application/json" -d '{"username": "example_user"}'`);
     });
   }
 }

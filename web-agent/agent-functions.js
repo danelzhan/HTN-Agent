@@ -606,6 +606,53 @@ function poi_search(pre, post) {
   return { new: n, lost: l };
 }
 
+async function getUserInfo(username) {
+  const userDir = path.join("profile_screenshots", username);
+  
+  // Check if user data already exists
+  const collageAnalysisPath = path.join(userDir, "collage_analysis.json");
+  if (fs.existsSync(collageAnalysisPath)) {
+    console.log(`[GET_USER_INFO] Found existing analysis for ${username}`);
+    const existingData = JSON.parse(fs.readFileSync(collageAnalysisPath, "utf8"));
+    return existingData;
+  }
+  
+  // If no existing data, scrape and analyze the profile
+  console.log(`[GET_USER_INFO] No existing data found for ${username}, starting fresh analysis`);
+  const instagramUrl = `https://www.instagram.com/${username}/`;
+  const SYSTEM_PROMPT = readSystemPrompt();
+  
+  try {
+    // Scrape the profile
+    await scrape_image(instagramUrl, username, 800);
+    
+    // Analyze the profile collage
+    const result = await analyzeProfileCollage(username, SYSTEM_PROMPT);
+    
+    // Save the result
+    const outPath = path.join(userDir, "collage_analysis.json");
+    fs.writeFileSync(outPath, JSON.stringify(result, null, 2));
+    console.log(`[GET_USER_INFO] Saved analysis: ${outPath}`);
+    
+    return result;
+  } catch (error) {
+    console.error(`[GET_USER_INFO] Error processing ${username}:`, error.message);
+    const errorResult = {
+      user_name: username,
+      ok: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    };
+    
+    // Save error result
+    ensureDir(userDir);
+    const outPath = path.join(userDir, "collage_analysis.json");
+    fs.writeFileSync(outPath, JSON.stringify(errorResult, null, 2));
+    
+    return errorResult;
+  }
+}
+
 module.exports = {
   analyzeProfileCollage,
   scrape_image,
@@ -614,5 +661,6 @@ module.exports = {
   createProfileCollage,
   image_consult,
   downloadUserImages,
-  collectSavedImageUrls
+  collectSavedImageUrls,
+  getUserInfo
 };
