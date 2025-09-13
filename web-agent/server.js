@@ -26,7 +26,14 @@ class APIHandler {
       return;
     }
 
-    if (req.method === 'POST' && parsedUrl.pathname === '/analyze-profiles') {
+    if (req.method === 'GET' && parsedUrl.pathname === '/') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ 
+        status: 'healthy', 
+        service: 'Instagram Agent API',
+        endpoints: ['/get-user-info', '/analyze-profiles']
+      }));
+    } else if (req.method === 'POST' && parsedUrl.pathname === '/analyze-profiles') {
       await this.handleAnalyzeProfiles(req, res);
     } else if (req.method === 'POST' && parsedUrl.pathname === '/get-user-info') {
       await this.handleGetUserInfo(req, res);
@@ -212,7 +219,7 @@ class APIHandler {
     }
   }
 
-  listen(port = 13732) {
+  listen(port = process.env.PORT || 13732) {
     this.server.listen(port, '0.0.0.0', () => {
       const networkInterfaces = require('os').networkInterfaces();
       const localIPs = [];
@@ -242,4 +249,4 @@ class APIHandler {
 
 // Start server
 const api = new APIHandler();
-api.listen(13732);
+api.listen();
