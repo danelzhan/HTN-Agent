@@ -306,8 +306,16 @@ function collectSavedImageUrls(user_name) {
 
     const car = p.carousel || [];
     for (const item of car) {
-      if (item?.best_image?.url) urls.push(item.best_image.url);
-      if (Array.isArray(item?.images)) for (const im of item.images) urls.push(im.url);
+      // Collect ALL images from each carousel item, not just best_image
+      if (Array.isArray(item?.images)) {
+        for (const im of item.images) {
+          if (im?.url) urls.push(im.url);
+        }
+      }
+      // Fallback to best_image if no images array
+      if (item?.best_image?.url && !Array.isArray(item?.images)) {
+        urls.push(item.best_image.url);
+      }
       // skip videos for Gemini image endpoint
     }
   }
@@ -319,7 +327,7 @@ async function analyzeProfileCollage(user_name, systemPrompt) {
   const userDir = path.join("profile_screenshots", user_name);
   ensureDir(userDir);
 
-  console.log(`\n[COLLAGE_ANALYSIS] Starting collage analysis for user: ${user_name}`);
+  console.log(`\n[PROFILE_ANALYSIS] Starting analysis for user: ${user_name}`);
   console.log(`[SYSTEM_PROMPT] Using prompt:\n${systemPrompt}\n`);
 
   try {
@@ -327,38 +335,62 @@ async function analyzeProfileCollage(user_name, systemPrompt) {
     console.log(`[STEP 1] Downloading post images...`);
     const imagePaths = await downloadUserImages(user_name);
     console.log(`[DOWNLOAD] Downloaded ${imagePaths.length} images`);
-    
-    if (imagePaths.length === 0) {
-      console.log(`[SKIP] No images found for ${user_name}`);
-      return { user_name, ok: false, error: "No images found" };
-    }
 
-    // Step 2: Create collage with profile screenshot and post images
-    console.log(`[STEP 2] Creating profile collage...`);
     const profileScreenshotPath = path.join(userDir, "profile_screenshot.png");
-    const collagePath = await createProfileCollage(user_name, profileScreenshotPath, imagePaths);
-    
-    // Step 3: Analyze collage with Gemini
-    console.log(`[STEP 3] Analyzing collage with Gemini...`);
     const enhancedPrompt = `${systemPrompt}\n\nProfile being analyzed: @${user_name}`;
-    const analysisText = await image_consult(collagePath, enhancedPrompt, 5);
+    let analysisText;
+    let imageToAnalyze;
+    let analysisType;
+
+    // Check if we have post images or just profile screenshot
+    if (imagePaths.length === 0) {
+      // Step 2a: No post images - analyze profile screenshot directly
+      console.log(`[STEP 2] No post images found. Analyzing profile screenshot directly...`);
+      
+      if (!fs.existsSync(profileScreenshotPath)) {
+        throw new Error(`Profile screenshot not found: ${profileScreenshotPath}`);
+      }
+      
+      imageToAnalyze = profileScreenshotPath;
+      analysisType = "profile_only";
+      
+      console.log(`[STEP 3] Analyzing profile screenshot with Gemini...`);
+      analysisText = await image_consult(imageToAnalyze, enhancedPrompt, 5);
+      
+    } else {
+      // Step 2b: Create collage with profile screenshot and post images
+      console.log(`[STEP 2] Creating profile collage with ${imagePaths.length} post images...`);
+      const collagePath = await createProfileCollage(user_name, profileScreenshotPath, imagePaths);
+      
+      imageToAnalyze = collagePath;
+      analysisType = "collage";
+      
+      console.log(`[STEP 3] Analyzing collage with Gemini...`);
+      analysisText = await image_consult(imageToAnalyze, enhancedPrompt, 5);
+    }
     
-    console.log(`[COLLAGE_RESPONSE] Gemini analysis for ${user_name}:\n${analysisText}\n`);
+    console.log(`[GEMINI_RESPONSE] Analysis for ${user_name}:\n${analysisText}\n`);
     
     // Step 4: Save results
     const result = {
       user_name,
       ok: true,
-      collage_path: collagePath,
+      analysis_type: analysisType,
+      image_analyzed: imageToAnalyze,
       profile_screenshot: profileScreenshotPath,
       post_images_count: imagePaths.length,
       analysis: analysisText,
       timestamp: new Date().toISOString()
     };
     
-    const outPath = path.join(userDir, "collage_analysis.json");
+    // Add collage_path only if we created one
+    if (analysisType === "collage") {
+      result.collage_path = imageToAnalyze;
+    }
+    
+    const outPath = path.join(userDir, "profile_analysis.json");
     fs.writeFileSync(outPath, JSON.stringify(result, null, 2));
-    console.log(`[WRITE] Saved collage analysis: ${outPath}`);
+    console.log(`[WRITE] Saved analysis: ${outPath}`);
     
     return result;
     
@@ -622,18 +654,26 @@ async function scrape_image(url, user_name, load_delay) {
   console.log("[profile] loaded]");
 
   const userDir = path.join("profile_screenshots", user_name);
+  const imagesDir = path.join(userDir, "images");
   ensureDir(userDir);
+  ensureDir(imagesDir);
 
   // Wait for profile to fully load before taking screenshot
   await sleep(3000); // 3 second delay for profile to load completely
   
   // Take profile screenshot at top of page first
   const profileScreenshotPath = path.join(userDir, "profile_screenshot.png");
+  const profileScreenshotImagesPath = path.join(imagesDir, "profile_screenshot.png");
+  
   await page.screenshot({ path: profileScreenshotPath, fullPage: false });
   console.log(`[SCREENSHOT] Profile screenshot saved: ${profileScreenshotPath}`);
+  
+  // Also save a copy in the images subdirectory
+  fs.copyFileSync(profileScreenshotPath, profileScreenshotImagesPath);
+  console.log(`[SCREENSHOT] Profile screenshot also saved in images directory: ${profileScreenshotImagesPath}`);
 
-  await page.evaluate(() => window.scrollBy(0, 1800));
-  await sleep(load_delay + 600);
+  await page.evaluate(() => window.scrollBy(0, 0));
+  await sleep(load_delay + 3000);
 
   let capturedPosts = await waitForTopic(page, "profile_posts", 25000);
   console.log("[capture] profile_posts:", capturedPosts?.length ?? 0);
@@ -871,4 +911,46 @@ console.log("[start] diff followers");
   console.log("[finish]");
 }
 
-main();
+/* ------------- test function ------------- */
+async function testSingleProfile(profileUrl) {
+  console.log(`[TEST] Starting test for profile: ${profileUrl}`);
+  
+  // Extract username from URL
+  const username = profileUrl.split('/').filter(Boolean).pop() || 'unknown';
+  console.log(`[TEST] Extracted username: ${username}`);
+  
+  const SYSTEM_PROMPT = readSystemPrompt();
+  
+  try {
+    // Step 1: Scrape the profile
+    console.log(`[TEST] Step 1: Scraping profile...`);
+    await scrape_image(profileUrl, username, 800);
+    
+    // Step 2: Analyze the profile collage
+    console.log(`[TEST] Step 2: Creating collage and analyzing...`);
+    const result = await analyzeProfileCollage(username, SYSTEM_PROMPT);
+    
+    // Step 3: Show results
+    console.log(`\n[TEST_RESULTS] Analysis complete for ${username}:`);
+    if (result.ok) {
+      console.log(`✅ Success: ${result.post_images_count} images processed`);
+      console.log(`📁 Collage saved: ${result.collage_path}`);
+      console.log(`📸 Profile screenshot: ${result.profile_screenshot}`);
+      console.log(`🤖 Analysis: ${result.analysis.substring(0, 200)}...`);
+    } else {
+      console.log(`❌ Failed: ${result.error}`);
+    }
+    
+    return result;
+    
+  } catch (error) {
+    console.error(`[TEST_ERROR] Failed to process ${username}: ${error.message}`);
+    return { username, ok: false, error: error.message };
+  }
+}
+
+// Test the specific profile
+testSingleProfile('https://www.instagram.com/hffguwemu/');
+
+// Original main function (commented out for testing)
+// main();
